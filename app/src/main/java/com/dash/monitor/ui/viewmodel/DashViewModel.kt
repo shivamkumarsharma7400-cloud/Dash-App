@@ -3,12 +3,19 @@ package com.dash.monitor.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.dash.monitor.data.collector.AppPermissionAudit
 import com.dash.monitor.data.local.dao.AppUsageSummary
+import com.dash.monitor.data.local.dao.ContactCallSummary
 import com.dash.monitor.data.local.dao.DataPeriodTotal
 import com.dash.monitor.data.local.dao.DataUsageSummary
+import com.dash.monitor.data.local.dao.NotificationAppSummary
 import com.dash.monitor.data.local.dao.PeriodTotal
+import com.dash.monitor.data.local.entity.AppEventEntity
+import com.dash.monitor.data.local.entity.CallRecordEntity
 import com.dash.monitor.data.local.entity.DeviceSnapshot
+import com.dash.monitor.data.local.entity.HourlyUsageEntity
 import com.dash.monitor.data.local.entity.LocationRecord
+import com.dash.monitor.data.local.entity.NetworkEventEntity
 import com.dash.monitor.data.repository.MonitorRepository
 import com.dash.monitor.service.MonitorForegroundService
 import com.dash.monitor.ui.components.ReportPeriod
@@ -48,7 +55,10 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDarkTheme = MutableStateFlow(true)
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme
 
-    // Overview flows
+    private val _permissionAudits = MutableStateFlow<List<AppPermissionAudit>>(emptyList())
+    val permissionAudits: StateFlow<List<AppPermissionAudit>> = _permissionAudits
+
+    // Overview
     val todayScreenTimeMs: StateFlow<Long> = dao.observeTotalScreenTimeForDay(todayKey)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
@@ -58,17 +68,26 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     val yearScreenTimeMs: StateFlow<Long> = dao.observeTotalScreenTimeForYear(currentYearKey)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
+    val hourlyUsageToday: StateFlow<List<HourlyUsageEntity>> = dao.observeHourlyUsageForDay(todayKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayCalls: StateFlow<List<CallRecordEntity>> = dao.observeCallsForDay(todayKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayLocations: StateFlow<List<LocationRecord>> = dao.observeLocationsForDay(todayKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val latestLocation: StateFlow<LocationRecord?> = dao.observeLatestLocation()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    val todayLocationCount: StateFlow<Int> = dao.observeLocationCountForDay(todayKey)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val totalLocationCount: StateFlow<Int> = dao.observeTotalLocationCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val latestSnapshot: StateFlow<DeviceSnapshot?> = dao.observeLatestSnapshot()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val todaySnapshots: StateFlow<List<DeviceSnapshot>> = dao.observeSnapshotsForDay(todayKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val snapshotCount: StateFlow<Int> = dao.observeSnapshotCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
@@ -114,6 +133,34 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Period-reactive Calls
+    val callList: StateFlow<List<CallRecordEntity>> = _selectedPeriod.flatMapLatest { period ->
+        when (period) {
+            ReportPeriod.DAY -> dao.observeCallsForDay(todayKey)
+            ReportPeriod.MONTH -> dao.observeCallsForMonth(currentMonthKey)
+            ReportPeriod.YEAR -> dao.observeCallsForYear(currentYearKey)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val topContacts: StateFlow<List<ContactCallSummary>> = _selectedPeriod.flatMapLatest { period ->
+        when (period) {
+            ReportPeriod.DAY -> dao.observeTopContactsForDay(todayKey)
+            ReportPeriod.MONTH -> dao.observeTopContactsForMonth(currentMonthKey)
+            ReportPeriod.YEAR -> dao.observeTopContactsForYear(currentYearKey)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Notifications, Events, Archive
+    val notificationSummaryToday: StateFlow<List<NotificationAppSummary>> =
+        dao.observeNotificationSummaryForDay(todayKey)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentAppEvents: StateFlow<List<AppEventEntity>> = dao.observeRecentAppEvents()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentNetworkEvents: StateFlow<List<NetworkEventEntity>> = dao.observeRecentNetworkEvents()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val availableMonths: StateFlow<List<String>> = dao.observeAvailableMonths()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -122,6 +169,7 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         refreshPermissionsAndSync()
+        scanPermissions()
     }
 
     fun selectPeriod(period: ReportPeriod) {
@@ -151,17 +199,29 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun exportBackup() {
+    fun scanPermissions() {
+        viewModelScope.launch {
+            _permissionAudits.value = repository.scanAppPermissions()
+        }
+    }
+
+    fun exportBackupJson() {
         viewModelScope.launch {
             val result = repository.exportLocalBackupJson()
             _exportMessage.value = result.fold(
-                onSuccess = { path -> "Saved locally: $path" },
+                onSuccess = { path -> "Saved JSON: $path" },
                 onFailure = { err -> "Export failed: ${err.message}" }
             )
         }
     }
 
-    fun clearExportMessage() {
-        _exportMessage.value = null
+    fun exportCallsCsv() {
+        viewModelScope.launch {
+            val result = repository.exportCallsCsv()
+            _exportMessage.value = result.fold(
+                onSuccess = { path -> "Saved CSV: $path" },
+                onFailure = { err -> "Export failed: ${err.message}" }
+            )
+        }
     }
 }

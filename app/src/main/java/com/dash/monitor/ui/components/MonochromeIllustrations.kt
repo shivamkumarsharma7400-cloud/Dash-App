@@ -1,25 +1,37 @@
 package com.dash.monitor.ui.components
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.dash.monitor.data.local.entity.HourlyUsageEntity
 import com.dash.monitor.data.local.entity.LocationRecord
 import com.dash.monitor.ui.theme.DashSpace
 import com.dash.monitor.ui.theme.LocalDashPalette
@@ -33,14 +45,24 @@ fun HeroTelemetryDial(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalDashPalette.current
-    Canvas(modifier = modifier.size(116.dp)) {
-        val strokeOuter = 5.dp.toPx()
-        val strokeInner = 2.dp.toPx()
+    val animScreen by animateFloatAsState(
+        targetValue = screenTimeRatio.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "screenDial"
+    )
+    val animBattery by animateFloatAsState(
+        targetValue = (batteryPercent.coerceIn(0, 100) / 100f),
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "batteryDial"
+    )
+
+    Canvas(modifier = modifier.size(124.dp)) {
+        val strokeOuter = 6.dp.toPx()
+        val strokeInner = 2.5.dp.toPx()
         val center = Offset(size.width / 2f, size.height / 2f)
         val radiusOuter = (size.minDimension / 2f) - strokeOuter
         val radiusMid = radiusOuter - 12.dp.toPx()
 
-        // Outer clock/telemetry ticks
         for (i in 0 until 24) {
             val angleRad = Math.toRadians((i * 15.0) - 90.0)
             val tickLen = if (i % 6 == 0) 6.dp.toPx() else 3.dp.toPx()
@@ -61,7 +83,6 @@ fun HeroTelemetryDial(
             )
         }
 
-        // Screen time arc track
         drawArc(
             color = palette.hairline,
             startAngle = -90f,
@@ -69,22 +90,20 @@ fun HeroTelemetryDial(
             useCenter = false,
             topLeft = Offset(center.x - radiusMid, center.y - radiusMid),
             size = Size(radiusMid * 2, radiusMid * 2),
-            style = Stroke(width = strokeOuter, cap = StrokeCap.Butt)
+            style = Stroke(width = strokeOuter, cap = StrokeCap.Round)
         )
 
-        // Screen time active sweep
         drawArc(
             color = palette.ink,
             startAngle = -90f,
-            sweepAngle = (screenTimeRatio.coerceIn(0f, 1f) * 360f),
+            sweepAngle = animScreen * 360f,
             useCenter = false,
             topLeft = Offset(center.x - radiusMid, center.y - radiusMid),
             size = Size(radiusMid * 2, radiusMid * 2),
-            style = Stroke(width = strokeOuter, cap = StrokeCap.Butt)
+            style = Stroke(width = strokeOuter, cap = StrokeCap.Round)
         )
 
-        // Inner battery ring
-        val radiusInner = radiusMid - 12.dp.toPx()
+        val radiusInner = radiusMid - 13.dp.toPx()
         drawCircle(
             color = palette.hairline,
             radius = radiusInner,
@@ -94,19 +113,117 @@ fun HeroTelemetryDial(
         drawArc(
             color = palette.inkSecondary,
             startAngle = -90f,
-            sweepAngle = (batteryPercent.coerceIn(0, 100) / 100f) * 360f,
+            sweepAngle = animBattery * 360f,
             useCenter = false,
             topLeft = Offset(center.x - radiusInner, center.y - radiusInner),
             size = Size(radiusInner * 2, radiusInner * 2),
-            style = Stroke(width = strokeInner)
+            style = Stroke(width = strokeInner, cap = StrokeCap.Round)
         )
 
-        // Center dot
+        drawCircle(color = palette.ink, radius = 3.5.dp.toPx(), center = center)
+    }
+}
+
+@Composable
+fun SmoothAreaSparkline(
+    points: List<Float>,
+    modifier: Modifier = Modifier
+) {
+    val palette = LocalDashPalette.current
+    if (points.size < 2) return
+
+    val maxVal = (points.maxOrNull() ?: 1f).coerceAtLeast(1f)
+    val minVal = (points.minOrNull() ?: 0f)
+    val span = (maxVal - minVal).coerceAtLeast(1f)
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(96.dp)
+    ) {
+        val w = size.width
+        val h = size.height - 8.dp.toPx()
+        val stepX = w / (points.size - 1).coerceAtLeast(1)
+
+        val linePath = Path()
+        val fillPath = Path()
+
+        val coords = points.mapIndexed { i, v ->
+            val x = i * stepX
+            val y = h - (((v - minVal) / span) * (h - 10.dp.toPx()))
+            Offset(x, y)
+        }
+
+        coords.forEachIndexed { idx, pt ->
+            if (idx == 0) {
+                linePath.moveTo(pt.x, pt.y)
+                fillPath.moveTo(pt.x, h)
+                fillPath.lineTo(pt.x, pt.y)
+            } else {
+                val prev = coords[idx - 1]
+                val midX = (prev.x + pt.x) / 2f
+                linePath.cubicTo(midX, prev.y, midX, pt.y, pt.x, pt.y)
+                fillPath.cubicTo(midX, prev.y, midX, pt.y, pt.x, pt.y)
+            }
+        }
+        fillPath.lineTo(coords.last().x, h)
+        fillPath.close()
+
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(palette.ink.copy(alpha = 0.22f), palette.ink.copy(alpha = 0.0f))
+            )
+        )
+        drawPath(
+            path = linePath,
+            color = palette.ink,
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+        )
         drawCircle(
             color = palette.ink,
-            radius = 3.dp.toPx(),
-            center = center
+            radius = 4.dp.toPx(),
+            center = coords.last()
         )
+    }
+}
+
+@Composable
+fun HourlyHeatmapStrip(
+    buckets: List<HourlyUsageEntity>,
+    modifier: Modifier = Modifier
+) {
+    val palette = LocalDashPalette.current
+    val map = buckets.associateBy { it.hour }
+    val maxMs = (buckets.maxOfOrNull { it.foregroundTimeMs } ?: 1L).coerceAtLeast(1L)
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            for (hr in 0..23) {
+                val ms = map[hr]?.foregroundTimeMs ?: 0L
+                val ratio = (ms.toFloat() / maxMs.toFloat()).coerceIn(0f, 1f)
+                val alpha = if (ms <= 0L) 0.08f else (0.20f + ratio * 0.80f)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(palette.ink.copy(alpha = alpha))
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(DashSpace.xs))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("00:00", style = MaterialTheme.typography.labelSmall, color = palette.inkSecondary)
+            Text("12:00", style = MaterialTheme.typography.labelSmall, color = palette.inkSecondary)
+            Text("23:00", style = MaterialTheme.typography.labelSmall, color = palette.inkSecondary)
+        }
     }
 }
 
@@ -119,48 +236,45 @@ fun MonochromeBarChart(
     if (values.isEmpty()) return
 
     val maxVal = (values.maxOfOrNull { it.second } ?: 1f).coerceAtLeast(1f)
-    Column(modifier = modifier.fillMaxWidth()) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(132.dp)
-        ) {
-            val count = values.size
-            val slotWidth = size.width / count.coerceAtLeast(1)
-            val barWidth = (slotWidth * 0.56f).coerceIn(4.dp.toPx(), 24.dp.toPx())
-            val baselineY = size.height - 2.dp.toPx()
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(132.dp)
+    ) {
+        val count = values.size
+        val slotWidth = size.width / count.coerceAtLeast(1)
+        val barWidth = (slotWidth * 0.56f).coerceIn(5.dp.toPx(), 24.dp.toPx())
+        val baselineY = size.height - 2.dp.toPx()
 
-            // Guide lines
-            for (step in 1..3) {
-                val y = baselineY - (baselineY * (step / 4f))
-                drawLine(
-                    color = palette.hairline,
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
-                )
-            }
-
-            // Baseline
+        for (step in 1..3) {
+            val y = baselineY - (baselineY * (step / 4f))
             drawLine(
-                color = palette.inkSecondary,
-                start = Offset(0f, baselineY),
-                end = Offset(size.width, baselineY),
-                strokeWidth = 1.dp.toPx()
+                color = palette.hairline,
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
             )
+        }
 
-            values.forEachIndexed { index, (_, v) ->
-                val normalized = (v / maxVal).coerceIn(0f, 1f)
-                val barHeight = (baselineY - 8.dp.toPx()) * normalized
-                val left = (index * slotWidth) + (slotWidth - barWidth) / 2f
-                val top = baselineY - barHeight
-                drawRect(
-                    color = if (index == values.lastIndex) palette.ink else palette.inkSecondary,
-                    topLeft = Offset(left, top),
-                    size = Size(barWidth, barHeight)
-                )
-            }
+        drawLine(
+            color = palette.inkSecondary,
+            start = Offset(0f, baselineY),
+            end = Offset(size.width, baselineY),
+            strokeWidth = 1.dp.toPx()
+        )
+
+        values.forEachIndexed { index, (_, v) ->
+            val normalized = (v / maxVal).coerceIn(0f, 1f)
+            val barHeight = (baselineY - 10.dp.toPx()) * normalized
+            val left = (index * slotWidth) + (slotWidth - barWidth) / 2f
+            val top = baselineY - barHeight
+            drawRoundRect(
+                color = if (index == values.lastIndex) palette.ink else palette.inkSecondary.copy(alpha = 0.65f),
+                topLeft = Offset(left, top),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+            )
         }
     }
 }
@@ -173,32 +287,27 @@ fun SplitDataMeter(
 ) {
     val palette = LocalDashPalette.current
     val total = (wifiBytes + mobileBytes).coerceAtLeast(1L)
-    val wifiRatio = wifiBytes.toFloat() / total.toFloat()
+    val animRatio by animateFloatAsState(
+        targetValue = wifiBytes.toFloat() / total.toFloat(),
+        animationSpec = tween(700, easing = FastOutSlowInEasing),
+        label = "splitMeter"
+    )
 
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(14.dp)
+            .clip(RoundedCornerShape(4.dp))
     ) {
-        // Outline frame
-        drawRect(
-            color = palette.hairline,
-            size = size,
-            style = Stroke(width = 1.dp.toPx())
-        )
-        // Wi-Fi solid block
-        val wifiWidth = size.width * wifiRatio
+        drawRect(color = palette.hairline, size = size)
+        val wifiWidth = size.width * animRatio
         if (wifiWidth > 0f) {
-            drawRect(
-                color = palette.ink,
-                size = Size(wifiWidth, size.height)
-            )
+            drawRect(color = palette.ink, size = Size(wifiWidth, size.height))
         }
-        // Mobile hatched/secondary block
         val mobileWidth = size.width - wifiWidth
         if (mobileWidth > 0f) {
             drawRect(
-                color = palette.inkSecondary.copy(alpha = 0.35f),
+                color = palette.inkSecondary.copy(alpha = 0.4f),
                 topLeft = Offset(wifiWidth, 0f),
                 size = Size(mobileWidth, size.height)
             )
@@ -215,34 +324,20 @@ fun LocationCoordinatePlot(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(176.dp)
+            .height(184.dp)
+            .clip(RoundedCornerShape(8.dp))
     ) {
-        // Topographic grid
         val cols = 6
         val rows = 4
         for (c in 1 until cols) {
             val x = size.width * (c / cols.toFloat())
-            drawLine(
-                color = palette.hairline,
-                start = Offset(x, 0f),
-                end = Offset(x, size.height),
-                strokeWidth = 1.dp.toPx()
-            )
+            drawLine(palette.hairline, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
         }
         for (r in 1 until rows) {
             val y = size.height * (r / rows.toFloat())
-            drawLine(
-                color = palette.hairline,
-                start = Offset(0f, y),
-                end = Offset(size.width, y),
-                strokeWidth = 1.dp.toPx()
-            )
+            drawLine(palette.hairline, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
         }
-        drawRect(
-            color = palette.hairline,
-            size = size,
-            style = Stroke(width = 1.dp.toPx())
-        )
+        drawRect(palette.hairline, size = size, style = Stroke(width = 1.dp.toPx()))
 
         if (records.isEmpty()) return@Canvas
 
@@ -262,11 +357,7 @@ fun LocationCoordinatePlot(
             if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
 
-        drawPath(
-            path = path,
-            color = palette.inkSecondary,
-            style = Stroke(width = 1.5.dp.toPx())
-        )
+        drawPath(path = path, color = palette.inkSecondary, style = Stroke(width = 1.5.dp.toPx()))
 
         ordered.forEachIndexed { idx, rec ->
             val x = pad + (((rec.longitude - minLng) / lngSpan).toFloat() * (size.width - pad * 2))
@@ -280,7 +371,7 @@ fun LocationCoordinatePlot(
             if (isLatest) {
                 drawCircle(
                     color = palette.ink,
-                    radius = 10.dp.toPx(),
+                    radius = 11.dp.toPx(),
                     center = Offset(x, y),
                     style = Stroke(width = 1.dp.toPx())
                 )
@@ -289,7 +380,7 @@ fun LocationCoordinatePlot(
     }
 }
 
-enum class EmptyArtKind { COMPASS, HOURGLASS, SIGNAL, LEDGER }
+enum class EmptyArtKind { COMPASS, HOURGLASS, SIGNAL, LEDGER, PHONE, BELL }
 
 @Composable
 fun MonochromeEmptyIllustration(
@@ -315,12 +406,10 @@ fun MonochromeEmptyIllustration(
                         drawCircle(palette.ink, radius = 4.dp.toPx(), center = c, style = stroke)
                         drawLine(palette.ink, Offset(c.x, c.y - 24.dp.toPx()), Offset(c.x, c.y - 8.dp.toPx()), 1.5.dp.toPx())
                         drawLine(palette.inkSecondary, Offset(c.x, c.y + 8.dp.toPx()), Offset(c.x, c.y + 24.dp.toPx()), 1.5.dp.toPx())
-                        drawLine(palette.inkSecondary, Offset(c.x - 24.dp.toPx(), c.y), Offset(c.x - 8.dp.toPx(), c.y), 1.5.dp.toPx())
-                        drawLine(palette.inkSecondary, Offset(c.x + 8.dp.toPx(), c.y), Offset(c.x + 24.dp.toPx(), c.y), 1.5.dp.toPx())
                     }
                     EmptyArtKind.HOURGLASS -> {
-                        val w = 20.dp.toPx()
-                        val h = 24.dp.toPx()
+                        val w = 18.dp.toPx()
+                        val h = 22.dp.toPx()
                         val p = Path().apply {
                             moveTo(c.x - w, c.y - h)
                             lineTo(c.x + w, c.y - h)
@@ -349,20 +438,21 @@ fun MonochromeEmptyIllustration(
                             drawLine(palette.ink, Offset(c.x - 14.dp.toPx(), y), Offset(c.x + 14.dp.toPx(), y), 1.5.dp.toPx())
                         }
                     }
+                    EmptyArtKind.PHONE -> {
+                        drawRoundRect(palette.ink, Offset(c.x - 16.dp.toPx(), c.y - 26.dp.toPx()), Size(32.dp.toPx(), 52.dp.toPx()), CornerRadius(6.dp.toPx()), style = stroke)
+                        drawCircle(palette.inkSecondary, 2.5.dp.toPx(), Offset(c.x, c.y + 18.dp.toPx()))
+                    }
+                    EmptyArtKind.BELL -> {
+                        drawArc(palette.ink, 180f, 180f, false, Offset(c.x - 18.dp.toPx(), c.y - 16.dp.toPx()), Size(36.dp.toPx(), 32.dp.toPx()), style = stroke)
+                        drawLine(palette.ink, Offset(c.x - 22.dp.toPx(), c.y + 10.dp.toPx()), Offset(c.x + 22.dp.toPx(), c.y + 10.dp.toPx()), 1.5.dp.toPx())
+                        drawCircle(palette.ink, 3.dp.toPx(), Offset(c.x, c.y + 18.dp.toPx()))
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(DashSpace.md))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = palette.ink
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium, color = palette.ink)
             Spacer(modifier = Modifier.height(DashSpace.xs))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = palette.inkSecondary
-            )
+            Text(text = subtitle, style = MaterialTheme.typography.bodyMedium, color = palette.inkSecondary)
         }
     }
 }

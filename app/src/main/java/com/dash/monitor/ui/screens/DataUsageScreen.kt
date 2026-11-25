@@ -10,21 +10,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dash.monitor.data.local.dao.DataPeriodTotal
 import com.dash.monitor.data.local.dao.DataUsageSummary
 import com.dash.monitor.ui.components.EmptyArtKind
 import com.dash.monitor.ui.components.HairlineCard
-import com.dash.monitor.ui.components.MetricValueRow
+import com.dash.monitor.ui.components.InsightPill
 import com.dash.monitor.ui.components.MonochromeBarChart
 import com.dash.monitor.ui.components.MonochromeEmptyIllustration
 import com.dash.monitor.ui.components.PeriodSelector
+import com.dash.monitor.ui.components.ProportionalBarRow
 import com.dash.monitor.ui.components.ReportPeriod
 import com.dash.monitor.ui.components.SectionHeader
 import com.dash.monitor.ui.components.SplitDataMeter
@@ -44,6 +43,8 @@ fun DataUsageScreen(
     val totalWifi = items.sumOf { it.wifiBytes }
     val totalMobile = items.sumOf { it.mobileBytes }
     val totalAll = totalWifi + totalMobile
+    val maxBytes = (items.maxOfOrNull { it.totalBytes } ?: 1L).coerceAtLeast(1L)
+    val wifiPct = if (totalAll > 0) ((totalWifi * 100) / totalAll).toInt() else 0
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -53,15 +54,21 @@ fun DataUsageScreen(
         item {
             Column {
                 Text(
-                    text = "DATA USAGE",
+                    text = "DATA ANALYTICS",
                     style = MaterialTheme.typography.labelSmall,
                     color = palette.inkSecondary
                 )
                 Spacer(modifier = Modifier.height(DashSpace.xs))
                 Text(
                     text = DateKeys.formatBytes(totalAll),
-                    style = TabularMetricStyle.copy(fontSize = 32.sp, color = palette.ink)
+                    style = TabularMetricStyle.copy(fontSize = 34.sp, color = palette.ink)
                 )
+                Spacer(modifier = Modifier.height(DashSpace.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(DashSpace.sm)) {
+                    InsightPill("$wifiPct% WI-FI")
+                    InsightPill("${100 - wifiPct}% MOBILE")
+                    InsightPill("${items.size} APPS")
+                }
                 Spacer(modifier = Modifier.height(DashSpace.md))
                 SplitDataMeter(wifiBytes = totalWifi, mobileBytes = totalMobile)
                 Spacer(modifier = Modifier.height(DashSpace.sm))
@@ -116,18 +123,15 @@ fun DataUsageScreen(
             }
         } else {
             item {
-                SectionHeader(title = "Per-App Traffic", trailing = "TOTAL")
+                SectionHeader(title = "Per-App Traffic Share", trailing = "TOTAL")
             }
             items(items, key = { it.packageName }) { app ->
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    MetricValueRow(
-                        label = app.appName,
-                        value = DateKeys.formatBytes(app.totalBytes),
-                        sublabel = "WI-FI ${DateKeys.formatBytes(app.wifiBytes)} · MOBILE ${DateKeys.formatBytes(app.mobileBytes)}"
-                    )
-                    Spacer(modifier = Modifier.height(DashSpace.md))
-                    HorizontalDivider(thickness = 1.dp, color = palette.hairline)
-                }
+                ProportionalBarRow(
+                    title = app.appName,
+                    value = DateKeys.formatBytes(app.totalBytes),
+                    sublabel = "WI-FI ${DateKeys.formatBytes(app.wifiBytes)} · MOBILE ${DateKeys.formatBytes(app.mobileBytes)}",
+                    fraction = app.totalBytes.toFloat() / maxBytes.toFloat()
+                )
             }
         }
     }

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,18 +23,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dash.monitor.data.local.dao.DataUsageSummary
+import com.dash.monitor.data.local.entity.CallRecordEntity
 import com.dash.monitor.data.local.entity.DeviceSnapshot
+import com.dash.monitor.data.local.entity.HourlyUsageEntity
 import com.dash.monitor.data.local.entity.LocationRecord
+import com.dash.monitor.data.repository.MonitorRepository
 import com.dash.monitor.ui.components.HairlineCard
 import com.dash.monitor.ui.components.HeroTelemetryDial
+import com.dash.monitor.ui.components.HourlyHeatmapStrip
+import com.dash.monitor.ui.components.InsightPill
+import com.dash.monitor.ui.components.KpiTile
 import com.dash.monitor.ui.components.MetricValueRow
 import com.dash.monitor.ui.components.SectionHeader
+import com.dash.monitor.ui.components.SmoothAreaSparkline
 import com.dash.monitor.ui.components.SplitDataMeter
 import com.dash.monitor.ui.theme.DashSpace
 import com.dash.monitor.ui.theme.LocalDashPalette
 import com.dash.monitor.ui.theme.TabularMetricStyle
 import com.dash.monitor.util.DateKeys
 import com.dash.monitor.util.PermissionStatus
+import java.util.Locale
 
 @Composable
 fun OverviewScreen(
@@ -43,29 +50,34 @@ fun OverviewScreen(
     todayScreenTimeMs: Long,
     monthScreenTimeMs: Long,
     yearScreenTimeMs: Long,
+    hourlyUsage: List<HourlyUsageEntity>,
     todayData: List<DataUsageSummary>,
+    todayCalls: List<CallRecordEntity>,
+    todayLocations: List<LocationRecord>,
     latestLocation: LocationRecord?,
-    todayLocationCount: Int,
     latestSnapshot: DeviceSnapshot?,
+    todaySnapshots: List<DeviceSnapshot>,
     permissionStatus: PermissionStatus,
     isSyncing: Boolean,
     isDarkTheme: Boolean,
     onToggleTheme: () -> Unit,
     onSyncNow: () -> Unit,
     onRequestUsageAccess: () -> Unit,
-    onRequestLocationAccess: () -> Unit
+    onRequestCorePermissions: () -> Unit
 ) {
     val palette = LocalDashPalette.current
     val totalWifi = todayData.sumOf { it.wifiBytes }
     val totalMobile = todayData.sumOf { it.mobileBytes }
     val totalData = totalWifi + totalMobile
+    val todayTalkSec = todayCalls.sumOf { it.durationSeconds }
+    val distanceKm = MonitorRepository.calculateDistanceKm(todayLocations)
+    val peakHour = hourlyUsage.maxByOrNull { it.foregroundTimeMs }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(DashSpace.lg),
         verticalArrangement = Arrangement.spacedBy(DashSpace.lg)
     ) {
-        // Editorial Top Bar
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -74,7 +86,7 @@ fun OverviewScreen(
             ) {
                 Column {
                     Text(
-                        text = "DASH / LOCAL TELEMETRY",
+                        text = "DASH / ANALYTICAL TELEMETRY",
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.inkSecondary
                     )
@@ -88,7 +100,7 @@ fun OverviewScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(DashSpace.sm)) {
                     OutlinedButton(
                         onClick = onToggleTheme,
-                        shape = RoundedCornerShape(4.dp),
+                        shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, palette.hairline),
                         contentPadding = PaddingValues(horizontal = DashSpace.md, vertical = DashSpace.sm)
                     ) {
@@ -100,7 +112,7 @@ fun OverviewScreen(
                     }
                     Button(
                         onClick = onSyncNow,
-                        shape = RoundedCornerShape(4.dp),
+                        shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = palette.invertedBg,
                             contentColor = palette.invertedInk
@@ -116,18 +128,17 @@ fun OverviewScreen(
             }
         }
 
-        // Permission Gate Banner if incomplete
         if (!permissionStatus.allCoreGranted) {
             item {
                 HairlineCard {
                     Text(
-                        text = "PERMISSIONS REQUIRED",
+                        text = "SETUP PERMISSIONS FOR FULL CONTROL",
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.ink
                     )
                     Spacer(modifier = Modifier.height(DashSpace.sm))
                     Text(
-                        text = "Grant Usage Access for screen time & data usage, and Location for local movement logs.",
+                        text = "Enable Usage Access (Screen & Data) and Location + Call Log so Dash can archive everything locally.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = palette.inkSecondary
                     )
@@ -136,7 +147,7 @@ fun OverviewScreen(
                         if (!permissionStatus.usageStatsGranted) {
                             Button(
                                 onClick = onRequestUsageAccess,
-                                shape = RoundedCornerShape(4.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = palette.invertedBg,
                                     contentColor = palette.invertedInk
@@ -145,13 +156,13 @@ fun OverviewScreen(
                                 Text("USAGE ACCESS", style = MaterialTheme.typography.labelSmall)
                             }
                         }
-                        if (!permissionStatus.fineLocationGranted) {
+                        if (!permissionStatus.fineLocationGranted || !permissionStatus.callLogGranted) {
                             OutlinedButton(
-                                onClick = onRequestLocationAccess,
-                                shape = RoundedCornerShape(4.dp),
+                                onClick = onRequestCorePermissions,
+                                shape = RoundedCornerShape(8.dp),
                                 border = BorderStroke(1.dp, palette.ink)
                             ) {
-                                Text("LOCATION", style = MaterialTheme.typography.labelSmall, color = palette.ink)
+                                Text("LOCATION & CALLS", style = MaterialTheme.typography.labelSmall, color = palette.ink)
                             }
                         }
                     }
@@ -159,7 +170,7 @@ fun OverviewScreen(
             }
         }
 
-        // Hero Card with custom Canvas Dial
+        // Hero Analytical Card
         item {
             HairlineCard {
                 Row(
@@ -173,41 +184,61 @@ fun OverviewScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = palette.inkSecondary
                         )
-                        Spacer(modifier = Modifier.height(DashSpace.sm))
-                        Text(
-                            text = DateKeys.formatDuration(todayScreenTimeMs),
-                            style = TabularMetricStyle.copy(
-                                fontSize = 34.sp,
-                                color = palette.ink
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(DashSpace.md))
-                        Text(
-                            text = "MONTH: ${DateKeys.formatDuration(monthScreenTimeMs)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = palette.inkSecondary
-                        )
                         Spacer(modifier = Modifier.height(DashSpace.xs))
                         Text(
-                            text = "YEAR: ${DateKeys.formatDuration(yearScreenTimeMs)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = palette.inkSecondary
+                            text = DateKeys.formatDuration(todayScreenTimeMs),
+                            style = TabularMetricStyle.copy(fontSize = 36.sp, color = palette.ink)
                         )
+                        Spacer(modifier = Modifier.height(DashSpace.sm))
+                        Row(horizontalArrangement = Arrangement.spacedBy(DashSpace.xs)) {
+                            InsightPill("M: ${DateKeys.formatDuration(monthScreenTimeMs)}")
+                            InsightPill("Y: ${DateKeys.formatDuration(yearScreenTimeMs)}")
+                        }
                     }
-                    Spacer(modifier = Modifier.width(DashSpace.lg))
+                    Spacer(modifier = Modifier.width(DashSpace.md))
                     HeroTelemetryDial(
                         screenTimeRatio = (todayScreenTimeMs / (8f * 3_600_000f)).coerceIn(0f, 1f),
                         batteryPercent = latestSnapshot?.batteryLevel ?: 0
                     )
                 }
+                if (hourlyUsage.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(DashSpace.lg))
+                    SectionHeader(
+                        title = "24-Hour Activity Heatmap",
+                        trailing = peakHour?.let { "PEAK ${String.format(Locale.US, "%02d:00", it.hour)}" }
+                    )
+                    Spacer(modifier = Modifier.height(DashSpace.md))
+                    HourlyHeatmapStrip(buckets = hourlyUsage)
+                }
             }
         }
 
-        // Data Usage Summary
+        // 2x2 Analytical KPI Grid
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(DashSpace.md)
+            ) {
+                KpiTile(
+                    label = "Talk Time",
+                    value = DateKeys.formatDuration(todayTalkSec * 1000L),
+                    insight = "${todayCalls.size} CALLS TODAY",
+                    modifier = Modifier.weight(1f)
+                )
+                KpiTile(
+                    label = "Travelled",
+                    value = String.format(Locale.US, "%.1f km", distanceKm),
+                    insight = "${todayLocations.size} GPS PINGS",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // Data Consumption Split
         item {
             HairlineCard {
                 SectionHeader(
-                    title = "Data Consumption Today",
+                    title = "Network Consumption Today",
                     trailing = DateKeys.formatBytes(totalData)
                 )
                 Spacer(modifier = Modifier.height(DashSpace.md))
@@ -231,38 +262,33 @@ fun OverviewScreen(
             }
         }
 
-        // Location & Device Health
+        // Battery & Device Sparkline
         item {
             HairlineCard {
                 SectionHeader(
-                    title = "Location & Device",
-                    trailing = "$todayLocationCount PINGS TODAY"
+                    title = "Battery & Device Health",
+                    trailing = latestSnapshot?.let { "${it.batteryLevel}% · ${it.batteryTempC}°C" } ?: "--"
                 )
+                if (todaySnapshots.size >= 2) {
+                    Spacer(modifier = Modifier.height(DashSpace.md))
+                    SmoothAreaSparkline(
+                        points = todaySnapshots.map { it.batteryLevel.toFloat() }
+                    )
+                }
                 Spacer(modifier = Modifier.height(DashSpace.md))
                 MetricValueRow(
-                    label = "Last Recorded Position",
-                    value = if (latestLocation != null) DateKeys.timeLabel(latestLocation.timestamp) else "--:--",
+                    label = "Last Position",
+                    value = latestLocation?.let { DateKeys.timeLabel(it.timestamp) } ?: "--:--",
                     sublabel = latestLocation?.addressLine
-                        ?: latestLocation?.let {
-                            String.format("%.4f, %.4f", it.latitude, it.longitude)
-                        }
-                        ?: "No coordinates recorded yet"
-                )
-                Spacer(modifier = Modifier.height(DashSpace.md))
-                MetricValueRow(
-                    label = "Battery & Thermal",
-                    value = latestSnapshot?.let { "${it.batteryLevel}%" } ?: "--",
-                    sublabel = latestSnapshot?.let {
-                        val state = if (it.isCharging) "CHARGING" else "DISCHARGING"
-                        "$state · ${it.batteryTempC}°C · ${it.screenUnlockCount} UNLOCKS"
-                    }
+                        ?: latestLocation?.let { String.format(Locale.US, "%.4f, %.4f", it.latitude, it.longitude) }
+                        ?: "Waiting for GPS/Network fix"
                 )
                 Spacer(modifier = Modifier.height(DashSpace.md))
                 MetricValueRow(
                     label = "Free Storage / RAM",
                     value = latestSnapshot?.let { DateKeys.formatBytes(it.availableStorageBytes) } ?: "--",
                     sublabel = latestSnapshot?.let {
-                        "RAM AVAIL: ${DateKeys.formatBytes(it.availableRamBytes)}"
+                        "RAM ${DateKeys.formatBytes(it.availableRamBytes)} · ${it.screenUnlockCount} UNLOCKS"
                     }
                 )
             }

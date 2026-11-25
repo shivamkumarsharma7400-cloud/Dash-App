@@ -5,11 +5,14 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.pm.PackageManager
 import com.dash.monitor.data.local.entity.AppUsageDaily
+import com.dash.monitor.data.local.entity.HourlyUsageEntity
 import com.dash.monitor.util.DateKeys
 import com.dash.monitor.util.PermissionHelper
+import java.util.Calendar
 
 data class UsageCollectionResult(
     val dailyApps: List<AppUsageDaily>,
+    val hourlyBuckets: List<HourlyUsageEntity>,
     val screenUnlockCount: Int
 )
 
@@ -17,12 +20,12 @@ class UsageCollector(private val context: Context) {
 
     fun collectForDay(dayStartMs: Long, dayEndMs: Long): UsageCollectionResult {
         if (!PermissionHelper.hasUsageStatsPermission(context)) {
-            return UsageCollectionResult(emptyList(), 0)
+            return UsageCollectionResult(emptyList(), emptyList(), 0)
         }
 
         val usageStatsManager =
             context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return UsageCollectionResult(emptyList(), 0)
+                ?: return UsageCollectionResult(emptyList(), emptyList(), 0)
 
         val pm = context.packageManager
         val events = usageStatsManager.queryEvents(dayStartMs, dayEndMs)
@@ -32,7 +35,13 @@ class UsageCollector(private val context: Context) {
         val totalTimeMap = mutableMapOf<String, Long>()
         val launchCountMap = mutableMapOf<String, Int>()
         val lastUsedMap = mutableMapOf<String, Long>()
+
+        val hourlyDuration = LongArray(24)
+        val hourlyUnlocks = IntArray(24)
+        val hourlyAppTime = Array(24) { mutableMapOf<String, Long>() }
         var unlockCount = 0
+
+        val cal = Calendar.getInstance()
 
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
@@ -48,22 +57,34 @@ class UsageCollector(private val context: Context) {
                 UsageEvents.Event.ACTIVITY_STOPPED -> {
                     val start = foregroundStartMap.remove(pkg)
                     if (start != null && event.timeStamp > start) {
-                        totalTimeMap[pkg] = (totalTimeMap[pkg] ?: 0L) + (event.timeStamp - start)
+                        val dur = event.timeStamp - start
+                        totalTimeMap[pkg] = (totalTimeMap[pkg] ?: 0L) + dur
+                        cal.timeInMillis = start
+                        val hr = cal.get(Calendar.HOUR_OF_DAY).coerceIn(0, 23)
+                        hourlyDuration[hr] += dur
+                        hourlyAppTime[hr][pkg] = (hourlyAppTime[hr][pkg] ?: 0L) + dur
                     }
                     lastUsedMap[pkg] = maxOf(lastUsedMap[pkg] ?: 0L, event.timeStamp)
                 }
                 UsageEvents.Event.KEYGUARD_HIDDEN -> {
                     unlockCount++
+                    cal.timeInMillis = event.timeStamp
+                    val hr = cal.get(Calendar.HOUR_OF_DAY).coerceIn(0, 23)
+                    hourlyUnlocks[hr]++
                 }
             }
         }
 
-        // Close any currently open foreground session up to dayEndMs
         val now = minOf(System.currentTimeMillis(), dayEndMs)
         foregroundStartMap.forEach { (pkg, start) ->
             if (now > start) {
-                totalTimeMap[pkg] = (totalTimeMap[pkg] ?: 0L) + (now - start)
+                val dur = now - start
+                totalTimeMap[pkg] = (totalTimeMap[pkg] ?: 0L) + dur
                 lastUsedMap[pkg] = maxOf(lastUsedMap[pkg] ?: 0L, now)
+                cal.timeInMillis = start
+                val hr = cal.get(Calendar.HOUR_OF_DAY).coerceIn(0, 23)
+                hourlyDuration[hr] += dur
+                hourlyAppTime[hr][pkg] = (hourlyAppTime[hr][pkg] ?: 0L) + dur
             }
         }
 
@@ -72,7 +93,7 @@ class UsageCollector(private val context: Context) {
         val yearKey = DateKeys.yearKey(dayStartMs)
 
         val results = totalTimeMap.entries
-            .filter { it.value > 1000L } // ignore <1s noise
+            .filter { it.value > 1000L }
             .map { (pkg, duration) ->
                 AppUsageDaily(
                     dateKey = dateKey,
@@ -86,7 +107,20 @@ class UsageCollector(private val context: Context) {
                 )
             }
 
-        return UsageCollectionResult(results, unlockCount)
+        val hourlyList = (0..23).map { hr ->
+            val topPkg = hourlyAppTime[hr].maxByOrNull { it.value }?.key
+            HourlyUsageEntity(
+                dateKey = dateKey,
+                hour = hr,
+                monthKey = monthKey,
+                yearKey = yearKey,
+                foregroundTimeMs = hourlyDuration[hr],
+                unlockCount = hourlyUnlocks[hr],
+                topAppName = topPkg?.let { resolveAppName(pm, it) } ?: ""
+            )
+        }
+
+        return UsageCollectionResult(results, hourlyList, unlockCount)
     }
 
     private fun resolveAppName(pm: PackageManager, packageName: String): String {

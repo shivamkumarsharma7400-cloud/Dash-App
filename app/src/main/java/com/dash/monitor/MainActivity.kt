@@ -2,6 +2,7 @@ package com.dash.monitor
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -9,6 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dash.monitor.ui.screens.CallsScreen
 import com.dash.monitor.ui.screens.DataUsageScreen
 import com.dash.monitor.ui.screens.LocationScreen
 import com.dash.monitor.ui.screens.OverviewScreen
@@ -54,6 +61,7 @@ enum class DashTab(val label: String) {
     OVERVIEW("HOME"),
     SCREEN("SCREEN"),
     DATA("DATA"),
+    CALLS("CALLS"),
     LOCATION("MAP"),
     REPORTS("VAULT")
 }
@@ -85,27 +93,35 @@ private fun DashAppRoot(vm: DashViewModel) {
     val todayScreenTime by vm.todayScreenTimeMs.collectAsState()
     val monthScreenTime by vm.monthScreenTimeMs.collectAsState()
     val yearScreenTime by vm.yearScreenTimeMs.collectAsState()
+    val hourlyUsage by vm.hourlyUsageToday.collectAsState()
     val appUsage by vm.appUsageList.collectAsState()
     val screenTrend by vm.screenTimeTrend.collectAsState()
     val dataUsage by vm.dataUsageList.collectAsState()
     val dataTrend by vm.dataUsageTrend.collectAsState()
+    val calls by vm.callList.collectAsState()
+    val todayCalls by vm.todayCalls.collectAsState()
+    val topContacts by vm.topContacts.collectAsState()
     val locations by vm.locationList.collectAsState()
+    val todayLocations by vm.todayLocations.collectAsState()
     val latestLocation by vm.latestLocation.collectAsState()
-    val todayLocationCount by vm.todayLocationCount.collectAsState()
     val totalLocationCount by vm.totalLocationCount.collectAsState()
     val latestSnapshot by vm.latestSnapshot.collectAsState()
+    val todaySnapshots by vm.todaySnapshots.collectAsState()
     val snapshotCount by vm.snapshotCount.collectAsState()
+    val notificationSummary by vm.notificationSummaryToday.collectAsState()
+    val appEvents by vm.recentAppEvents.collectAsState()
+    val networkEvents by vm.recentNetworkEvents.collectAsState()
+    val permissionAudits by vm.permissionAudits.collectAsState()
     val availableMonths by vm.availableMonths.collectAsState()
     val availableYears by vm.availableYears.collectAsState()
     val exportMessage by vm.exportMessage.collectAsState()
 
-    val locationLauncher = rememberLauncherForActivityResult(
+    val corePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         vm.refreshPermissionsAndSync()
     }
 
-    // Refresh permissions when user returns from System Usage Access Settings
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -120,15 +136,27 @@ private fun DashAppRoot(vm: DashViewModel) {
         context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
     }
 
-    val requestLocationPermissions: () -> Unit = {
+    val openNotificationSettings: () -> Unit = {
+        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    val openAppSettings: (String) -> Unit = { pkg ->
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", pkg, null)
+        }
+        context.startActivity(intent)
+    }
+
+    val requestCorePermissions: () -> Unit = {
         val perms = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_CALL_LOG
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        locationLauncher.launch(perms.toTypedArray())
+        corePermissionLauncher.launch(perms.toTypedArray())
     }
 
     val palette = LocalDashPalette.current
@@ -170,40 +198,55 @@ private fun DashAppRoot(vm: DashViewModel) {
             }
         }
     ) { innerPadding ->
-        Box(
+        AnimatedContent(
+            targetState = currentTab,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+            },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (currentTab) {
+                .padding(innerPadding),
+            label = "tabTransition"
+        ) { tab ->
+            when (tab) {
                 DashTab.OVERVIEW -> OverviewScreen(
                     todayKey = vm.todayKey,
                     todayScreenTimeMs = todayScreenTime,
                     monthScreenTimeMs = monthScreenTime,
                     yearScreenTimeMs = yearScreenTime,
+                    hourlyUsage = hourlyUsage,
                     todayData = dataUsage,
+                    todayCalls = todayCalls,
+                    todayLocations = todayLocations,
                     latestLocation = latestLocation,
-                    todayLocationCount = todayLocationCount,
                     latestSnapshot = latestSnapshot,
+                    todaySnapshots = todaySnapshots,
                     permissionStatus = permissionStatus,
                     isSyncing = isSyncing,
                     isDarkTheme = isDarkTheme,
                     onToggleTheme = vm::toggleTheme,
                     onSyncNow = vm::syncNow,
                     onRequestUsageAccess = openUsageSettings,
-                    onRequestLocationAccess = requestLocationPermissions
+                    onRequestCorePermissions = requestCorePermissions
                 )
                 DashTab.SCREEN -> ScreenTimeScreen(
                     period = period,
                     onSelectPeriod = vm::selectPeriod,
                     apps = appUsage,
-                    trend = screenTrend
+                    trend = screenTrend,
+                    hourlyUsage = hourlyUsage
                 )
                 DashTab.DATA -> DataUsageScreen(
                     period = period,
                     onSelectPeriod = vm::selectPeriod,
                     items = dataUsage,
                     trend = dataTrend
+                )
+                DashTab.CALLS -> CallsScreen(
+                    period = period,
+                    onSelectPeriod = vm::selectPeriod,
+                    calls = calls,
+                    topContacts = topContacts
                 )
                 DashTab.LOCATION -> LocationScreen(
                     period = period,
@@ -216,11 +259,19 @@ private fun DashAppRoot(vm: DashViewModel) {
                     totalLocationCount = totalLocationCount,
                     snapshotCount = snapshotCount,
                     latestSnapshot = latestSnapshot,
+                    notificationSummary = notificationSummary,
+                    appEvents = appEvents,
+                    networkEvents = networkEvents,
+                    permissionAudits = permissionAudits,
                     permissionStatus = permissionStatus,
                     exportMessage = exportMessage,
-                    onExportBackup = vm::exportBackup,
+                    onExportBackupJson = vm::exportBackupJson,
+                    onExportCallsCsv = vm::exportCallsCsv,
+                    onScanPermissions = vm::scanPermissions,
+                    onOpenAppSettings = openAppSettings,
                     onRequestUsageAccess = openUsageSettings,
-                    onRequestLocationAccess = requestLocationPermissions
+                    onRequestCorePermissions = requestCorePermissions,
+                    onRequestNotificationAccess = openNotificationSettings
                 )
             }
         }

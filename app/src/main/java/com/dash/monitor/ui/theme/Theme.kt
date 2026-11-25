@@ -28,23 +28,23 @@ data class DashPalette(
 
 private val DarkDashPalette = DashPalette(
     background = Color(0xFF000000),
-    surface = Color(0xFF0A0A0A),
-    surfaceElevated = Color(0xFF141414),
+    surface = Color(0xFF0D0D0D),
+    surfaceElevated = Color(0xFF171717),
     ink = Color(0xFFFFFFFF),
-    inkSecondary = Color(0xFF8C8C8C),
+    inkSecondary = Color(0xFF969696),
     hairline = Color(0xFF262626),
     invertedBg = Color(0xFFFFFFFF),
     invertedInk = Color(0xFF000000)
 )
 
 private val LightDashPalette = DashPalette(
-    background = Color(0xFFFFFFFF),
-    surface = Color(0xFFFAFAFA),
-    surfaceElevated = Color(0xFFF2F2F2),
-    ink = Color(0xFF000000),
-    inkSecondary = Color(0xFF666666),
-    hairline = Color(0xFFE2E2E2),
-    invertedBg = Color(0xFF000000),
+    background = Color(0xFFF6F6F7),
+    surface = Color(0xFFFFFFFF),
+    surfaceElevated = Color(0xFFEEEEF0),
+    ink = Color(0xFF0A0A0A),
+    inkSecondary = Color(0xFF66666B),
+    hairline = Color(0xFFE2E2E6),
+    invertedBg = Color(0xFF0A0A0A),
     invertedInk = Color(0xFFFFFFFF)
 )
 
@@ -64,21 +64,21 @@ object DashSpace {
 private val DashTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 32.sp,
-        lineHeight = 38.sp,
-        letterSpacing = (-0.5).sp
+        fontWeight = FontWeight.Bold,
+        fontSize = 34.sp,
+        lineHeight = 40.sp,
+        letterSpacing = (-0.8).sp
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 20.sp,
         lineHeight = 26.sp,
-        letterSpacing = (-0.2).sp
+        letterSpacing = (-0.3).sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 15.sp,
         lineHeight = 20.sp
     ),
@@ -99,7 +99,7 @@ private val DashTypography = Typography(
 
 val TabularMetricStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
-    fontWeight = FontWeight.SemiBold,
+    fontWeight = FontWeight.Bold,
     fontFeatureSettings = "tnum"
 )
 
