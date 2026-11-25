@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Dash</string>
+    <string name="monitor_channel_name">Local Device Monitor</string>
+    <string name="monitor_channel_desc">Records location, screen time, and data usage locally on your device.</string>
+</resources>
